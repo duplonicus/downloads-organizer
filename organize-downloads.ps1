@@ -47,6 +47,7 @@ $Rules = @{
 
     # Media (Catch-all)
     ".jpg"  = $Destinations.Images
+    ".jpeg" = $Destinations.Images
     ".png"  = $Destinations.Images
     ".mp4"  = $Destinations.Videos
     ".mkv"  = $Destinations.Videos
@@ -70,6 +71,20 @@ $Files = Get-ChildItem -Path $SourceFolder -File | Where-Object { $_.Extension -
 foreach ($File in $Files) {
     $Ext = $File.Extension.ToLower()
     
+    # Unblock file if it has Zone.Identifier stream (downloaded from internet)
+    Unblock-File -Path $File.FullName -ErrorAction SilentlyContinue
+    
+    # Skip files that are locked/in use by another process
+    try {
+        $FileStream = [System.IO.File]::Open($File.FullName, 'Open', 'Read', 'None')
+        $FileStream.Close()
+    }
+    catch {
+        $LogMessage = "$(Get-Date): Skipped '$($File.Name)' - file is in use"
+        Add-Content -Path $LogFile -Value $LogMessage
+        continue
+    }
+    
     if ($Rules.ContainsKey($Ext)) {
         $TargetFolder = $Rules[$Ext]
 
@@ -86,16 +101,28 @@ foreach ($File in $Files) {
             $TimeStamp = Get-Date -Format "yyyyMMdd-HHmmss"
             $NewName = "{0}_{1}{2}" -f $File.BaseName, $TimeStamp, $File.Extension
             $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $NewName
+            $LogMessage = "$(Get-Date): File exists, using timestamped name: '$NewName'"
+            Add-Content -Path $LogFile -Value $LogMessage
         }
 
-        # 3. Move the file
+        # 3. Move the file using robocopy (more reliable than Move-Item)
         try {
-            Move-Item -Path $File.FullName -Destination $DestinationPath -ErrorAction Stop
-            $LogMessage = "$(Get-Date): Moved '$($File.Name)' to '$TargetFolder'"
+            # Create a temporary directory to hold just this file for robocopy
+            $TempDir = "$env:TEMP\org_tmp_$(Get-Random)"
+            New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+            Copy-Item -Path $File.FullName -Destination $TempDir -Force | Out-Null
+            
+            # Use robocopy to move (more reliable with locked/synced files)
+            $RoboCopyResult = robocopy $TempDir $TargetFolder $File.Name /MOVE /R:1 /W:1 /NFL /NDL /NJH /NJS
+            
+            # Clean up temp directory
+            Remove-Item -Path $TempDir -Force -Recurse -ErrorAction SilentlyContinue
+            
+            $LogMessage = "$(Get-Date): Moved '$($File.Name)' to '$DestinationPath'"
             Add-Content -Path $LogFile -Value $LogMessage
         }
         catch {
-            $LogMessage = "$(Get-Date): ERROR moving '$($File.Name)' - $($_.Exception.Message)"
+            $LogMessage = "$(Get-Date): ERROR moving '$($File.Name)' to '$DestinationPath' - $($_.Exception.Message)"
             Add-Content -Path $LogFile -Value $LogMessage
         }
     }
@@ -123,9 +150,10 @@ foreach ($Directory in $Directories) {
         $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $NewName
     }
     
-    # 3. Move the directory
+    # 3. Move the directory using robocopy
     try {
-        Move-Item -Path $Directory.FullName -Destination $DestinationPath -ErrorAction Stop
+        # Use robocopy to move directories (more reliable)
+        $RoboCopyResult = robocopy $Directory.FullName $DestinationPath /E /MOVE /R:1 /W:1 /NFL /NDL /NJH /NJS
         $LogMessage = "$(Get-Date): Moved folder '$($Directory.Name)' to '$TargetFolder'"
         Add-Content -Path $LogFile -Value $LogMessage
     }
