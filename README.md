@@ -16,6 +16,7 @@ This project provides a PowerShell-based solution to automatically sort download
 
 ## Project Structure
 
+### Windows (PowerShell + Task Scheduler)
 ```
 .
 ├── install-task.ps1          # Installer script - registers the scheduled task
@@ -24,7 +25,17 @@ This project provides a PowerShell-based solution to automatically sort download
 └── README.md                 # This file
 ```
 
+### Linux/macOS (Bash + Cron)
+```
+.
+├── install-cron.sh           # Installer script - registers the cron job
+├── organize-downloads.sh     # Main organizer script - performs file sorting
+└── README.md                 # This file
+```
+
 ## Installation
+
+### Windows
 
 1. **Run as Administrator**: Open PowerShell as Administrator
 2. **Navigate to the project folder**:
@@ -40,6 +51,28 @@ The installer will:
 - Verify the organizer script exists
 - Create the scheduled task
 - Confirm successful registration
+
+### Linux / macOS
+
+1. **Navigate to the project folder**:
+   ```bash
+   cd /path/to/downloads-organizer
+   ```
+2. **Execute the installer**:
+   ```bash
+   bash install-cron.sh
+   ```
+
+The installer will:
+- Make the organizer script executable
+- Register a daily cron job at 6:00 PM
+- Display the cron schedule for verification
+
+To view or modify the cron job:
+```bash
+crontab -l        # View all cron jobs
+crontab -e        # Edit cron jobs
+```
 
 ## File Organization Rules
 
@@ -94,13 +127,19 @@ Contains records of:
 
 ## Running Manually
 
-To run the organizer immediately (without waiting for the scheduled time):
-
+### Windows
 ```powershell
 .\organize-downloads.ps1
 ```
 
+### Linux / macOS
+```bash
+bash organize-downloads.sh
+```
+
 ## Verification
+
+### Windows
 
 To verify the task is registered:
 
@@ -108,6 +147,19 @@ To verify the task is registered:
 2. Navigate to **Task Scheduler Library**
 3. Look for **OrganizeDownloads** task
 4. Check the trigger tab to confirm it runs daily at 6:00 PM
+
+### Linux / macOS
+
+To verify the cron job is registered:
+
+```bash
+crontab -l
+```
+
+You should see a line like:
+```
+0 18 * * * /path/to/organize-downloads.sh
+```
 
 ## Troubleshooting
 
