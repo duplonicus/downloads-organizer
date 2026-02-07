@@ -57,6 +57,9 @@ $Rules = @{
     ".ps1"  = $Destinations.Scripts
     ".py"   = $Destinations.Scripts
     ".js"   = $Destinations.Scripts
+    ".dll"  = $Destinations.Applications
+    ".apk"  = $Destinations.Applications
+    ".vlt"  = $Destinations.Scripts
 }
 
 # --- Execution ---
@@ -95,6 +98,40 @@ foreach ($File in $Files) {
             $LogMessage = "$(Get-Date): ERROR moving '$($File.Name)' - $($_.Exception.Message)"
             Add-Content -Path $LogFile -Value $LogMessage
         }
+    }
+}
+
+# Handle directories (extracted archives, etc.)
+$Directories = Get-ChildItem -Path $SourceFolder -Directory
+
+foreach ($Directory in $Directories) {
+    # Move extracted folders to Archives
+    $TargetFolder = $Destinations.Archives
+    
+    # 1. Create directory if it doesn't exist
+    if (-not (Test-Path -Path $TargetFolder)) {
+        New-Item -ItemType Directory -Path $TargetFolder -Force | Out-Null
+    }
+    
+    # 2. Check for duplicate folder names
+    $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $Directory.Name
+    
+    if (Test-Path -Path $DestinationPath) {
+        # Append timestamp if folder exists
+        $TimeStamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $NewName = "{0}_{1}" -f $Directory.Name, $TimeStamp
+        $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $NewName
+    }
+    
+    # 3. Move the directory
+    try {
+        Move-Item -Path $Directory.FullName -Destination $DestinationPath -ErrorAction Stop
+        $LogMessage = "$(Get-Date): Moved folder '$($Directory.Name)' to '$TargetFolder'"
+        Add-Content -Path $LogFile -Value $LogMessage
+    }
+    catch {
+        $LogMessage = "$(Get-Date): ERROR moving folder '$($Directory.Name)' - $($_.Exception.Message)"
+        Add-Content -Path $LogFile -Value $LogMessage
     }
 }
 
