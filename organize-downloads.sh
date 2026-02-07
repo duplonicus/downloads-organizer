@@ -120,5 +120,39 @@ for FILE in "$SOURCE_FOLDER"/*; do
     fi
 done
 
+# Handle directories (extracted archives, etc.)
+for DIR in "$SOURCE_FOLDER"/*/; do
+    # Skip if directory is empty
+    [[ ! -d "$DIR" ]] && continue
+    
+    DIRNAME=$(basename "$DIR")
+    # Skip hidden directories
+    [[ "$DIRNAME" == .* ]] && continue
+    
+    TARGET_FOLDER="${DESTINATIONS[Archives]}"
+    
+    # 1. Create directory if it doesn't exist
+    mkdir -p "$TARGET_FOLDER"
+    
+    # 2. Check for duplicate folder names
+    DESTINATION_PATH="$TARGET_FOLDER/$DIRNAME"
+    
+    if [[ -d "$DESTINATION_PATH" ]]; then
+        # Append timestamp if folder exists
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        NEW_NAME="${DIRNAME}_${TIMESTAMP}"
+        DESTINATION_PATH="$TARGET_FOLDER/$NEW_NAME"
+    fi
+    
+    # 3. Move the directory
+    if mv "$DIR" "$DESTINATION_PATH" 2>/dev/null; then
+        LOG_MESSAGE="$(date '+%m/%d/%Y %H:%M:%S'): Moved folder '$DIRNAME' to '$TARGET_FOLDER'"
+    else
+        LOG_MESSAGE="$(date '+%m/%d/%Y %H:%M:%S'): ERROR moving folder '$DIRNAME' - Failed to move"
+    fi
+    
+    echo "$LOG_MESSAGE" >> "$LOG_FILE"
+done
+
 # Log completion
 echo "$(date '+%m/%d/%Y %H:%M:%S'): Organize-Downloads task completed." >> "$LOG_FILE"
