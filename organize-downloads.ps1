@@ -29,7 +29,7 @@ $Rules = @{
     # Torrents
     ".torrent" = $Destinations.Torrents
 
-    # Documents (Specific subfolders as requested)
+    # Documents
     ".pdf"  = "$($Destinations.DocsRoot)\PDFs"
     ".txt"  = "$($Destinations.DocsRoot)\TXT"
     ".md"   = "$($Destinations.DocsRoot)\TXT"
@@ -39,13 +39,13 @@ $Rules = @{
     ".docx" = "$($Destinations.DocsRoot)\Word"
     ".doc"  = "$($Destinations.DocsRoot)\Word"
 
-    # Archives (Catch-all)
+    # Archives
     ".zip"  = $Destinations.Archives
     ".rar"  = $Destinations.Archives
     ".7z"   = $Destinations.Archives
     ".gz"   = $Destinations.Archives
 
-    # Media (Catch-all)
+    # Media
     ".jpg"  = $Destinations.Images
     ".jpeg" = $Destinations.Images
     ".png"  = $Destinations.Images
@@ -54,7 +54,7 @@ $Rules = @{
     ".mp3"  = $Destinations.Music
     ".wav"  = $Destinations.Music
 
-    # Code/Scripts (Catch-all)
+    # Code/Scripts
     ".ps1"  = $Destinations.Scripts
     ".py"   = $Destinations.Scripts
     ".js"   = $Destinations.Scripts
@@ -65,16 +65,16 @@ $Rules = @{
 
 # --- Execution ---
 
-# Ensure we aren't moving active downloads (exclude partials)
+# Ensure we aren't moving active downloads
 $Files = Get-ChildItem -Path $SourceFolder -File | Where-Object { $_.Extension -ne ".crdownload" -and $_.Extension -ne ".tmp" -and $_.Extension -ne ".part" }
 
 foreach ($File in $Files) {
     $Ext = $File.Extension.ToLower()
     
-    # Unblock file if it has Zone.Identifier stream (downloaded from internet)
+    # Unblock file (remove Zone.Identifier)
     Unblock-File -Path $File.FullName -ErrorAction SilentlyContinue
     
-    # Skip files that are locked/in use by another process
+    # Skip locked files
     try {
         $FileStream = [System.IO.File]::Open($File.FullName, 'Open', 'Read', 'None')
         $FileStream.Close()
@@ -88,16 +88,15 @@ foreach ($File in $Files) {
     if ($Rules.ContainsKey($Ext)) {
         $TargetFolder = $Rules[$Ext]
 
-        # 1. Create directory if it doesn't exist
+        # 1. Create directory if needed
         if (-not (Test-Path -Path $TargetFolder)) {
             New-Item -ItemType Directory -Path $TargetFolder -Force | Out-Null
         }
 
-        # 2. Check for duplicate filenames to avoid overwriting
+        # 2. Check for duplicate filenames
         $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $File.Name
         
         if (Test-Path -Path $DestinationPath) {
-            # Append timestamp if file exists
             $TimeStamp = Get-Date -Format "yyyyMMdd-HHmmss"
             $NewName = "{0}_{1}{2}" -f $File.BaseName, $TimeStamp, $File.Extension
             $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $NewName
@@ -105,25 +104,51 @@ foreach ($File in $Files) {
             Add-Content -Path $LogFile -Value $LogMessage
         }
 
-        # 3. Move the file using robocopy (more reliable than Move-Item)
+        # 3. Move the file with Explicit Verification
         try {
-            # Create a temporary directory to hold just this file for robocopy
-            $TempDir = "$env:TEMP\org_tmp_$(Get-Random)"
-            New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
-            Copy-Item -Path $File.FullName -Destination $TempDir -Force | Out-Null
+            # Attempt standard move
+            Move-Item -Path $File.FullName -Destination $DestinationPath -Force -ErrorAction Stop
             
-            # Use robocopy to move (more reliable with locked/synced files)
-            $RoboCopyResult = robocopy $TempDir $TargetFolder $File.Name /MOVE /R:1 /W:1 /NFL /NDL /NJH /NJS
+            # CRITICAL CHECK: Did the source file actually disappear?
+            if (Test-Path -Path $File.FullName) {
+                
+                # Check if destination file exists (meaning it was a Copy, not a Move)
+                if (Test-Path -Path $DestinationPath) {
+                    # Manual Delete of Source
+                    Remove-Item -Path $File.FullName -Force -ErrorAction Stop
+                    $LogMessage = "$(Get-Date): Moved (Copy+Delete) '$($File.Name)' to '$DestinationPath'"
+                } else {
+                     # Destination missing? Then the move failed completely.
+                     throw "Move failed: Destination file missing."
+                }
+            } else {
+                # Source is gone, so move was successful
+                $LogMessage = "$(Get-Date): Moved '$($File.Name)' to '$DestinationPath'"
+            }
             
-            # Clean up temp directory
-            Remove-Item -Path $TempDir -Force -Recurse -ErrorAction SilentlyContinue
-            
-            $LogMessage = "$(Get-Date): Moved '$($File.Name)' to '$DestinationPath'"
             Add-Content -Path $LogFile -Value $LogMessage
         }
         catch {
-            $LogMessage = "$(Get-Date): ERROR moving '$($File.Name)' to '$DestinationPath' - $($_.Exception.Message)"
+            # 4. Fallback to Robocopy /MOV if Move-Item + Delete fails
+            $LogMessage = "$(Get-Date): Move-Item failed for '$($File.Name)', attempting robocopy fallback..."
             Add-Content -Path $LogFile -Value $LogMessage
+            
+            try {
+                $RoboArgs = @($SourceFolder, $TargetFolder, $File.Name, "/MOV", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS")
+                & robocopy $RoboArgs | Out-Null
+                
+                if (Test-Path -Path $File.FullName) {
+                     $LogMessage = "$(Get-Date): WARNING - Robocopy ran but file '$($File.Name)' still exists in source."
+                     Add-Content -Path $LogFile -Value $LogMessage
+                } else {
+                     $LogMessage = "$(Get-Date): Robocopy successfully moved '$($File.Name)'"
+                     Add-Content -Path $LogFile -Value $LogMessage
+                }
+            }
+            catch {
+                $LogMessage = "$(Get-Date): CRITICAL ERROR moving '$($File.Name)' - $($_.Exception.Message)"
+                Add-Content -Path $LogFile -Value $LogMessage
+            }
         }
     }
 }
@@ -132,29 +157,33 @@ foreach ($File in $Files) {
 $Directories = Get-ChildItem -Path $SourceFolder -Directory
 
 foreach ($Directory in $Directories) {
-    # Move extracted folders to Archives
     $TargetFolder = $Destinations.Archives
     
-    # 1. Create directory if it doesn't exist
     if (-not (Test-Path -Path $TargetFolder)) {
         New-Item -ItemType Directory -Path $TargetFolder -Force | Out-Null
     }
     
-    # 2. Check for duplicate folder names
     $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $Directory.Name
     
     if (Test-Path -Path $DestinationPath) {
-        # Append timestamp if folder exists
         $TimeStamp = Get-Date -Format "yyyyMMdd-HHmmss"
         $NewName = "{0}_{1}" -f $Directory.Name, $TimeStamp
         $DestinationPath = Join-Path -Path $TargetFolder -ChildPath $NewName
     }
     
-    # 3. Move the directory using robocopy
     try {
-        # Use robocopy to move directories (more reliable)
-        $RoboCopyResult = robocopy $Directory.FullName $DestinationPath /E /MOVE /R:1 /W:1 /NFL /NDL /NJH /NJS
-        $LogMessage = "$(Get-Date): Moved folder '$($Directory.Name)' to '$TargetFolder'"
+        Move-Item -Path $Directory.FullName -Destination $DestinationPath -Force -ErrorAction Stop
+        
+        # Verify Directory Move
+        if (Test-Path -Path $Directory.FullName) {
+             if (Test-Path -Path $DestinationPath) {
+                 Remove-Item -Path $Directory.FullName -Recurse -Force -ErrorAction Stop
+                 $LogMessage = "$(Get-Date): Moved (Copy+Delete) folder '$($Directory.Name)' to '$DestinationPath'"
+             }
+        } else {
+            $LogMessage = "$(Get-Date): Moved folder '$($Directory.Name)' to '$DestinationPath'"
+        }
+        
         Add-Content -Path $LogFile -Value $LogMessage
     }
     catch {
@@ -163,5 +192,4 @@ foreach ($Directory in $Directories) {
     }
 }
 
-# Log completion
 Add-Content -Path $LogFile -Value "$(Get-Date): Organize-Downloads task completed."
